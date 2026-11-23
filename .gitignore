@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Сборка
+build/
+dist/
+*.spec
+
+# Редактор
+.idea/
+.vscode/
+
+# Личные данные и секреты (у каждого свои)
+gemini_key.txt
+telegram_token.txt
+telegram_owner.txt
+remote_token.txt
+pipka_memory.sqlite3
+apps.json
+aliases.json
+settings.json
+casino.json
+pipka_log.txt
+models/
