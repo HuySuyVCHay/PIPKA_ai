@@ -50,11 +50,11 @@ class ChatDatabase:
     @_locked
     def recent(self, limit=20):
         rows = self.conn.execute(
-            "SELECT role,content FROM messages ORDER BY id DESC LIMIT ?",
+            "SELECT role,content,created_at FROM messages ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         rows.reverse()
-        return [{"role": r, "content": c} for r, c in rows]
+        return [{"role": r, "content": c, "at": t} for r, c, t in rows]
 
     @_locked
     def remove_last_if_user(self):

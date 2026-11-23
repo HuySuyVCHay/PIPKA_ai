@@ -33,6 +33,7 @@ from pipka import ai, autostart, extras, files, gemini_client, keystore, setting
 from pipka.commands import handle as handle_command, execute_confirmed
 from pipka.config import PROJECT_DIR
 from pipka.dice import DiceWidget
+from pipka.roulette import RouletteDialog
 from pipka.stt import VoiceListener, libs_available
 from pipka.tgbot import TelegramBot
 from pipka.tts import Speaker
@@ -200,12 +201,15 @@ QUICK_ACTIONS = [
     ("🔊\nГромче", "громче"),
     ("🔉\nТише", "тише"),
     ("⏯️\nПауза", "пауза"),
-    ("🎡\nРулетка", "рулетка на красное"),
+    ("🎡\nРулетка", "открой рулетку"),
 ]
 
 DICE_ROLL_RE = re.compile(
     r"^(?:пипка\s+)?(?:брось|кинь|подбрось|бросай|кидай|бросить|кинуть|крутани)\s+"
     r"(?:мне\s+)?(?:кубик|кубики|кость|кости)\b", re.IGNORECASE)
+ROULETTE_OPEN_RE = re.compile(
+    r"^(?:(?:открой|покажи|запусти|давай|включи)\s+рулетк\w*|(?:сыграем|поиграем|играть)\s+в\s+рулетк\w*|"
+    r"рулетк\w*)$", re.IGNORECASE)
 DICE_ASK_RE = re.compile(
     r"(?:что|сколько|какое число|какая цифра|какое)\s+(?:тебе\s+|у тебя\s+)?(?:выпало|на кубике)",
     re.IGNORECASE)
@@ -311,10 +315,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_table(), 1)
         layout.addWidget(self._build_right())
 
-        for message in self.db.recent(30):
+        history = self.db.recent(30)
+        for message in history:
             who = "Ты" if message["role"] == "user" else "ПИПКА"
-            self.add_message(who, message["content"])
-        if not self.db.recent(1):
+            self.add_message(who, message["content"], at=message.get("at"))
+        if history:
+            self.add_note("— выше история прошлых разговоров —")
+        else:
             self.show_welcome()
 
         self.check_status()
@@ -520,10 +527,23 @@ class MainWindow(QMainWindow):
         return (f'<span style="color:#5f8a78;font-size:8pt">{stamp}</span>&nbsp;&nbsp;'
                 f'<span style="color:{MUTED};font-weight:700">{html.escape(who)} ♣</span>')
 
-    def add_message(self, who, text):
+    @staticmethod
+    def _stamp(at=None):
+        """Время сообщения: у сообщений из истории — настоящее, у вчерашних — с датой."""
+        moment = datetime.now()
+        if at:
+            try:
+                moment = datetime.fromisoformat(at)
+            except ValueError:
+                pass
+        if moment.date() == datetime.now().date():
+            return moment.strftime("%H:%M")
+        return moment.strftime("%d.%m %H:%M")
+
+    def add_message(self, who, text, at=None):
         self._clear_welcome()
         safe_text = html.escape(str(text)).replace("\n", "<br>")
-        stamp = datetime.now().strftime("%H:%M")
+        stamp = self._stamp(at)
         mine = who != "ПИПКА"
         align = Qt.AlignmentFlag.AlignRight if mine else Qt.AlignmentFlag.AlignLeft
         color = "#d8f0e4" if mine else TEXT
@@ -630,6 +650,11 @@ class MainWindow(QMainWindow):
             return True
         if DICE_ASK_RE.search(command_text):
             self.reply(self.dice_text(), user_text=text)
+            return True
+        bare = re.sub(r"^(?:пипк|пепк)\w*[\s,!]*", "", command_text.strip().lower().replace("ё", "е"))
+        if ROULETTE_OPEN_RE.match(bare.rstrip(".!?")):
+            self.reply("Открываю рулетку. Делайте ваши ставки!", user_text=text)
+            self.open_roulette()
             return True
 
         self.run_command(command_text, text)
@@ -900,10 +925,26 @@ class MainWindow(QMainWindow):
 
     # ---------- быстрые кнопки ----------
     def quick(self, command_text):
+        if command_text == "открой рулетку":
+            self.open_roulette()
+            return
         if self.busy():
             return
         self.dice.interact()
         self.run_command(command_text, None)
+
+    def open_roulette(self):
+        if getattr(self, "roulette", None) is None:
+            self.roulette = RouletteDialog(self)
+            self.roulette.played.connect(self.on_roulette_played)
+        self.roulette.refresh()
+        self.roulette.show()
+        self.roulette.raise_()
+        self.roulette.activateWindow()
+
+    def on_roulette_played(self, text):
+        self.add_note(text)
+        self.chips_label.setText(f"♦ {extras.chips()}")
 
     # ---------- напоминания и Telegram ----------
     def on_reminder(self, text):

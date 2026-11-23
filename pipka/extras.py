@@ -416,52 +416,82 @@ def _bet(n, default):
     return int(match.group(1)) if match else default
 
 
-def _ensure_chips():
+def ensure_chips():
     if chips() == 0:
         change_chips(REFILL)
         return f"Банк в хорошем настроении: держи {REFILL} фишек. "
     return ""
 
 
+ROULETTE_BETS = {
+    "red": "красное", "black": "чёрное", "even": "чётное", "odd": "нечётное",
+    "low": "1–18", "high": "19–36", "number": "число",
+}
+
+
+def roulette_color(spin):
+    return "зеро" if spin == 0 else ("красное" if spin in RED_NUMBERS else "чёрное")
+
+
+def roulette_wins(spin, pick, number=None):
+    """Сыграла ли ставка. Ставки на число/зеро платят 35 к 1, остальные 1 к 1."""
+    if pick == "number":
+        return spin == number
+    if spin == 0:
+        return False
+    return {
+        "red": spin in RED_NUMBERS,
+        "black": spin not in RED_NUMBERS,
+        "even": spin % 2 == 0,
+        "odd": spin % 2 == 1,
+        "low": spin <= 18,
+        "high": spin >= 19,
+    }[pick]
+
+
+def roulette_settle(spin, pick, bet, number=None):
+    """Считает ставку и меняет фишки. Возвращает (выиграл, выигрыш, баланс)."""
+    win = roulette_wins(spin, pick, number)
+    payout = bet * 35 if pick == "number" else bet
+    balance = change_chips(payout if win else -bet)
+    return win, payout, balance
+
+
+def roulette_label(pick, number=None):
+    if pick == "number":
+        return "зеро" if number == 0 else f"число {number}"
+    return ROULETTE_BETS[pick]
+
+
 def _roulette(n):
     if not ROULETTE_RE.search(n):
         return None
-    bonus = _ensure_chips()
+    bonus = ensure_chips()
     bet = min(_bet(n, 100), chips())
-    pick, label = "red", "красное"
-    number = None
+    pick, number = "red", None
     if re.search(r"черн|чёрн", n):
-        pick, label = "black", "чёрное"
+        pick = "black"
     elif re.search(r"нечетн|нечётн", n):
-        pick, label = "odd", "нечётное"
+        pick = "odd"
     elif re.search(r"четн|чётн", n):
-        pick, label = "even", "чётное"
+        pick = "even"
     elif re.search(r"зеро|\bноль\b", n):
-        pick, label, number = "number", "зеро", 0
+        pick, number = "number", 0
+    elif re.search(r"(?:1|один)\s*(?:-|–|до)\s*18|малы", n):
+        pick = "low"
+    elif re.search(r"19\s*(?:-|–|до)\s*36|больш", n):
+        pick = "high"
     else:
         single = re.search(r"на\s+(\d{1,2})\b(?!\s*фиш)", n)
         if single and int(single.group(1)) <= 36:
             pick, number = "number", int(single.group(1))
-            label = f"число {number}"
 
     spin = random.randint(0, 36)
-    color = "зеро" if spin == 0 else ("красное" if spin in RED_NUMBERS else "чёрное")
-    if pick == "number":
-        win = spin == number
-        payout = bet * 35
-    elif spin == 0:
-        win, payout = False, 0
-    elif pick in ("red", "black"):
-        win = (spin in RED_NUMBERS) == (pick == "red")
-        payout = bet
-    else:
-        win = (spin % 2 == 1) == (pick == "odd")
-        payout = bet
-
-    balance = change_chips(payout if win else -bet)
+    win, payout, balance = roulette_settle(spin, pick, bet, number)
     result = f"выигрыш {payout} фишек!" if win else "ставка сгорела."
-    return _reply(f"{bonus}Шарик остановился на {spin} ({color}). Ставка {bet} на {label} — "
-                  f"{result} Теперь у тебя {balance} фишек.")
+    return _reply(f"{bonus}Шарик остановился на {spin} ({roulette_color(spin)}). "
+                  f"Ставка {bet} на {roulette_label(pick, number)} — {result} "
+                  f"Теперь у тебя {balance} фишек.")
 
 
 def _coin(n):
@@ -472,7 +502,7 @@ def _coin(n):
         "решка" if "ставлю" in n and "решк" in n else "")
     if not guess:
         return _reply(f"Подбрасываю… {side.capitalize()}!")
-    bonus = _ensure_chips()
+    bonus = ensure_chips()
     bet = min(_bet(n, 50), chips())
     balance = change_chips(bet if side == guess else -bet)
     verdict = f"угадал, +{bet}!" if side == guess else f"мимо, -{bet}."
