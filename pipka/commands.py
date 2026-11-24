@@ -5,6 +5,7 @@ import difflib
 import os
 import re
 import subprocess
+import threading
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,6 +13,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 from pipka import ai, apps, extras, files
+from pipka.system import IS_MAC, IS_WINDOWS, osascript, reveal as reveal_in_folder
 
 HELP_TEXT = (
     "Что я умею:\n"
@@ -213,7 +215,7 @@ def _open_file(target, kind, reveal=False):
     name = Path(path).name
     try:
         if reveal and not is_dir:
-            subprocess.Popen(["explorer", "/select,", path])
+            reveal_in_folder(path)
             return f"Нашла файл «{name}», показываю в папке."
         apps.launch("folder" if is_dir else "file", path)
     except OSError as exc:
@@ -309,10 +311,30 @@ def _run_shutdown_tool(args):
     )
 
 
+# На Mac нет «shutdown через 30 секунд», поэтому ждём сами и даём время отменить
+_mac_power_timer = None
+
+
+def _mac_power(action):
+    command = "shut down" if action == "shutdown" else "restart"
+    osascript(f'tell application "System Events" to {command}')
+
+
 def execute_confirmed(action):
     """Выполняет подтверждённое действие. Возвращает (успех, сообщение)."""
-    if os.name != "nt":
-        return False, "Выключение и перезагрузка работают только в Windows."
+    global _mac_power_timer
+    if IS_MAC:
+        if action not in ("shutdown", "restart"):
+            return False, "Неизвестное действие."
+        if _mac_power_timer is not None:
+            _mac_power_timer.cancel()
+        _mac_power_timer = threading.Timer(30, _mac_power, args=(action,))
+        _mac_power_timer.daemon = True
+        _mac_power_timer.start()
+        what = "Выключение" if action == "shutdown" else "Перезагрузка"
+        return True, f"{what} через 30 секунд. Чтобы отменить, напиши: отмени выключение."
+    if not IS_WINDOWS:
+        return False, "Выключение и перезагрузка работают только в Windows и на Mac."
 
     if action == "shutdown":
         args = ["shutdown", "/s", "/t", "30"]
@@ -332,8 +354,15 @@ def execute_confirmed(action):
 
 
 def _cancel_shutdown():
-    if os.name != "nt":
-        return "Отмена работает только в Windows."
+    global _mac_power_timer
+    if IS_MAC:
+        if _mac_power_timer is None or not _mac_power_timer.is_alive():
+            return "Сейчас нет запланированного выключения, отменять нечего."
+        _mac_power_timer.cancel()
+        _mac_power_timer = None
+        return "Готово, выключение отменено."
+    if not IS_WINDOWS:
+        return "Отмена работает только в Windows и на Mac."
     try:
         _run_shutdown_tool(["shutdown", "/a"])
     except (OSError, subprocess.SubprocessError):

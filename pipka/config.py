@@ -1,12 +1,13 @@
-import os
 import sys
 from pathlib import Path
 
+from pipka.system import data_dir
+
 # Папка с данными: база памяти, ключи, apps.json, модели, лог.
 if getattr(sys, "frozen", False):
-    # Готовая программа PIPKA.exe: данные лежат в %APPDATA%\PIPKA,
-    # поэтому пересборка программы их не стирает.
-    PROJECT_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "PIPKA"
+    # Готовая программа: данные лежат в %APPDATA%\PIPKA (Windows)
+    # или ~/Library/Application Support/PIPKA (Mac), пересборка их не стирает.
+    PROJECT_DIR = data_dir()
 else:
     # Запуск из исходников: данные лежат рядом с main.py.
     PROJECT_DIR = Path(__file__).resolve().parent.parent

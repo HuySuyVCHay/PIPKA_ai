@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from pipka.config import PROJECT_DIR
+from pipka.system import IS_MAC, open_path
 
 USER_APPS_FILE = PROJECT_DIR / "apps.json"
 ALIASES_FILE = PROJECT_DIR / "aliases.json"
@@ -79,6 +80,25 @@ SYSTEM_APPS = {
     "настройки": ("uri", "ms-settings:"),
     "параметры": ("uri", "ms-settings:"),
 }
+if IS_MAC:
+    SYSTEM_APPS = {
+        "калькулятор": ("file", "/System/Applications/Calculator.app"),
+        "блокнот": ("file", "/System/Applications/TextEdit.app"),
+        "текстэдит": ("file", "/System/Applications/TextEdit.app"),
+        "диспетчер задач": ("file", "/System/Applications/Utilities/Activity Monitor.app"),
+        "мониторинг системы": ("file", "/System/Applications/Utilities/Activity Monitor.app"),
+        "терминал": ("file", "/System/Applications/Utilities/Terminal.app"),
+        "настройки": ("uri", "x-apple.systempreferences:"),
+        "параметры": ("uri", "x-apple.systempreferences:"),
+        "системные настройки": ("uri", "x-apple.systempreferences:"),
+        "сафари": ("file", "/Applications/Safari.app"),
+        "финдер": ("file", "/System/Library/CoreServices/Finder.app"),
+        "заметки": ("file", "/System/Applications/Notes.app"),
+        "календарь": ("file", "/System/Applications/Calendar.app"),
+        "фото": ("file", "/System/Applications/Photos.app"),
+        "магазин": ("file", "/System/Applications/App Store.app"),
+        "ап стор": ("file", "/System/Applications/App Store.app"),
+    }
 
 # Слова, из-за которых ярлык в меню «Пуск» пропускаем
 SKIP_WORDS = ("uninstall", "удалить", "удаление", "деинсталл", "readme", "справка", "help")
@@ -110,6 +130,13 @@ def _start_menu_dirs():
     return dirs
 
 
+def _mac_app_dirs():
+    folders = [Path("/Applications"), Path("/Applications/Utilities"),
+               Path("/System/Applications"), Path("/System/Applications/Utilities"),
+               Path.home() / "Applications"]
+    return [folder for folder in folders if folder.is_dir()]
+
+
 def _desktop_dirs():
     folders = (Path.home() / "Desktop", Path.home() / "OneDrive" / "Desktop",
                Path(os.environ.get("PUBLIC", "C:/Users/Public")) / "Desktop")
@@ -121,9 +148,14 @@ def _shortcuts():
     global _shortcuts_cache
     if _shortcuts_cache is None:
         items = {}
-        sources = [(folder, "**/*.lnk") for folder in _start_menu_dirs()]
-        # На рабочем столе — только ярлыки сверху и в папках первого уровня (например «Игры»)
-        sources += [(folder, pattern) for folder in _desktop_dirs() for pattern in ("*.lnk", "*/*.lnk")]
+        if IS_MAC:
+            # Программы Mac — это папки .app в «Программах» (и на рабочем столе)
+            sources = [(folder, pattern) for folder in _mac_app_dirs() for pattern in ("*.app", "*/*.app")]
+            sources += [(folder, pattern) for folder in _desktop_dirs() for pattern in ("*.app", "*/*.app")]
+        else:
+            sources = [(folder, "**/*.lnk") for folder in _start_menu_dirs()]
+            # На рабочем столе — только ярлыки сверху и в папках первого уровня (например «Игры»)
+            sources += [(folder, pattern) for folder in _desktop_dirs() for pattern in ("*.lnk", "*/*.lnk")]
         for folder, pattern in sources:
             try:
                 for path in folder.glob(pattern):
@@ -256,6 +288,9 @@ STEAM_SKIP = ("redistributable", "steamworks", "soundtrack", "dedicated server",
 
 
 def _steam_root():
+    if IS_MAC:
+        folder = Path.home() / "Library" / "Application Support" / "Steam"
+        return folder if folder.is_dir() else None
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
@@ -456,8 +491,6 @@ def launch(kind, target):
     if kind == "exe":
         subprocess.Popen([target], shell=False)
     elif kind in ("file", "folder", "uri"):
-        if not hasattr(os, "startfile"):
-            raise OSError("Запуск программ работает только в Windows.")
-        os.startfile(target)
+        open_path(target)
     else:
         raise OSError("Неизвестный тип запуска.")

@@ -21,11 +21,11 @@ import requests
 
 from pipka import apps, files
 from pipka.config import PROJECT_DIR, WAKE_PREFIXES
+from pipka.system import IS_MAC, NO_WINDOW, osascript
 
 # Окно ПИПКИ подписывается сюда, чтобы показывать напоминания и обновлять фишки
 on_reminder = None   # функция(текст)
 
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _reply(message, photo=""):
@@ -60,31 +60,70 @@ def _press(key, times=1):
         user32.keybd_event(key, 0, 2, 0)
 
 
+# На Mac звук и музыка управляются через AppleScript
+MAC_PLAYER = """
+if application "Spotify" is running then
+    tell application "Spotify" to {action}
+else if application "Music" is running then
+    tell application "Music" to {action}
+end if
+"""
+
+
+def _volume(percent):
+    if IS_MAC:
+        osascript(f"set volume output volume ((output volume of (get volume settings)) + {percent})")
+    else:
+        _press(VK_VOLUME_UP if percent > 0 else VK_VOLUME_DOWN, max(1, abs(percent) // 2))
+
+
+def _volume_max():
+    if IS_MAC:
+        osascript("set volume output volume 100")
+    else:
+        _press(VK_VOLUME_UP, 50)
+
+
+def _mute():
+    if IS_MAC:
+        osascript("set volume output muted not (output muted of (get volume settings))")
+    else:
+        _press(VK_VOLUME_MUTE)
+
+
+def _player(action):
+    """action: playpause, next track, previous track."""
+    if IS_MAC:
+        osascript(MAC_PLAYER.format(action=action))
+    else:
+        _press({"playpause": VK_PLAY, "next track": VK_NEXT, "previous track": VK_PREV}[action])
+
+
 def _media(n):
     match = VOLUME_UP_RE.match(n)
     if match:
         percent = int(match.group(1) or 10)
-        _press(VK_VOLUME_UP, max(1, percent // 2))
+        _volume(percent)
         return _reply(f"Громче на {percent}%.")
     match = VOLUME_DOWN_RE.match(n)
     if match:
         percent = int(match.group(1) or 10)
-        _press(VK_VOLUME_DOWN, max(1, percent // 2))
+        _volume(-percent)
         return _reply(f"Тише на {percent}%.")
     if VOLUME_MAX_RE.match(n):
-        _press(VK_VOLUME_UP, 50)
+        _volume_max()
         return _reply("Звук на максимум. Держись!")
     if MUTE_RE.match(n):
-        _press(VK_VOLUME_MUTE)
+        _mute()
         return _reply("Переключила звук.")
     if PLAY_RE.match(n):
-        _press(VK_PLAY)
+        _player("playpause")
         return _reply("Пауза / продолжаю.")
     if NEXT_RE.match(n):
-        _press(VK_NEXT)
+        _player("next track")
         return _reply("Следующий трек.")
     if PREV_RE.match(n):
-        _press(VK_PREV)
+        _player("previous track")
         return _reply("Предыдущий трек.")
     return None
 
@@ -94,15 +133,37 @@ CLOSE_RE = re.compile(r"^(?:закрой|закрыть|заверши|заве�
                       r"(?:мне\s+)?(?:программу\s+|приложение\s+|игру\s+)?(.+)$")
 PROTECTED = {"explorer", "svchost", "csrss", "winlogon", "dwm", "system", "lsass", "services",
              "smss", "wininit", "taskmgr", "conhost", "searchhost", "startmenuexperiencehost",
-             "shellexperiencehost", "textinputhost", "applicationframehost", "systemsettings"}
+             "shellexperiencehost", "textinputhost", "applicationframehost", "systemsettings",
+             "finder", "dock", "windowserver", "loginwindow", "systemuiserver", "launchd",
+             "kernel_task", "controlcenter", "notificationcenter"}
 
 
 def _compact(text):
     return re.sub(r"[^0-9a-zа-я]", "", apps.norm(text))
 
 
+def _mac_processes():
+    """{pid: (имя программы, [])} на Mac. Для программ .app берём название из пути."""
+    result = {}
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True,
+                             timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return result
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2 or not parts[0].isdigit():
+            continue
+        path = parts[1]
+        app = re.search(r"/([^/]+)\.app/", path)
+        result[int(parts[0])] = (app.group(1) if app else os.path.basename(path), [])
+    return result
+
+
 def _processes():
     """{pid: (имя exe без .exe, [заголовки окон])} — все процессы и их видимые окна."""
+    if IS_MAC:
+        return _mac_processes()
     result = {}
     try:
         out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
@@ -133,6 +194,15 @@ def _processes():
 
         user32.EnumWindows(proto(callback), 0)
     return result
+
+
+def _kill(pid, force):
+    """Сначала просим программу закрыться, force=True — закрываем принудительно."""
+    if IS_MAC or os.name != "nt":
+        subprocess.run(["kill", "-KILL" if force else "-TERM", str(pid)], capture_output=True)
+        return
+    args = ["taskkill", "/PID", str(pid), "/T"] + (["/F"] if force else [])
+    subprocess.run(args, capture_output=True, creationflags=NO_WINDOW)
 
 
 def _wanted_names(target):
@@ -174,16 +244,14 @@ def _close(n):
         return _reply(f"Не вижу запущенной программы «{target}».")
 
     for pid in hits:
-        subprocess.run(["taskkill", "/PID", str(pid), "/T"], capture_output=True,
-                       creationflags=NO_WINDOW)
+        _kill(pid, force=False)
 
     def finish_off():
         time.sleep(3)
         alive = _processes()
         for pid in hits:
             if pid in alive:
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
-                               creationflags=NO_WINDOW)
+                _kill(pid, force=True)
 
     threading.Thread(target=finish_off, daemon=True).start()
     shown = sorted(set(hits.values()), key=len)[0]
@@ -354,6 +422,12 @@ def screenshots_dir():
 def take_screenshot():
     """Снимок всего экрана в PNG. Возвращает путь или выбрасывает OSError."""
     path = screenshots_dir() / datetime.now().strftime("Скриншот %Y-%m-%d %H-%M-%S.png")
+    if IS_MAC:
+        result = subprocess.run(["screencapture", "-x", str(path)], capture_output=True, timeout=30)
+        if result.returncode != 0 or not path.exists():
+            raise OSError("Mac не дал сделать снимок. Разреши ПИПКЕ запись экрана: "
+                          "Системные настройки → Конфиденциальность → Запись экрана.")
+        return str(path)
     env = dict(os.environ, PIPKA_SHOT=str(path))
     result = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                              "-Command", SCREENSHOT_PS], env=env, capture_output=True,

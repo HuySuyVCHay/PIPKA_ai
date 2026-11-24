@@ -18,12 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-try:
-    import winsound
-except ImportError:
-    winsound = None
-
 from pipka import extras
+from pipka.system import FONT, beep
 
 # Порядок чисел на европейском колесе (по часовой стрелке)
 WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24,
@@ -35,7 +31,7 @@ BLACK = QColor("#15171c")
 GREEN = QColor("#1f8f4e")
 
 STYLE = """
-QDialog { background:#0a0b0e; color:#efe9da; font-family:'Segoe UI'; font-size:10pt; }
+QDialog { background:#0a0b0e; color:#efe9da; font-family:'FONTNAME'; font-size:10pt; }
 QLabel { background:transparent; color:#efe9da; }
 QLabel#title { color:#e8b64c; font-size:18pt; font-weight:900; letter-spacing:2px; }
 QLabel#section { color:#e8b64c; font-size:8pt; font-weight:700; letter-spacing:2px; }
@@ -60,7 +56,7 @@ QPushButton#spin {
 }
 QPushButton#spin:disabled { background:#5c5034; color:#2b2414; }
 QSpinBox { background:#191c23; color:#efe9da; border:1px solid #2a2d36; border-radius:8px; padding:6px; }
-"""
+""".replace("FONTNAME", FONT)
 
 
 def _pocket_color(number):
@@ -146,7 +142,7 @@ class WheelWidget(QWidget):
         painter.save()
         painter.translate(cx, cy)
         painter.rotate(self.angle)
-        font = QFont("Segoe UI", max(7, int(outer / 22)))
+        font = QFont(FONT, max(7, int(outer / 22)))
         font.setBold(True)
         painter.setFont(font)
         for i, number in enumerate(WHEEL):
@@ -378,9 +374,9 @@ class RouletteDialog(QDialog):
         self.history_label.setText("Последние: " + "  ".join(self.history))
         self.spin_button.setEnabled(True)
         self.refresh()
-        if win and winsound is not None:
+        if win:
             for tone in (880, 1109, 1319, 1760):
-                winsound.Beep(tone, 90)
+                beep(tone, 90)
         text = (f"Рулетка: {spin} ({color}). Ставка {bet} на {extras.roulette_label(pick, number)} — "
                 + (f"выигрыш {payout}!" if win else "мимо.") + f" Фишек: {balance}.")
         self.played.emit(text)

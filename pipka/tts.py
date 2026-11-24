@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from pipka.config import TTS_PITCH, TTS_RATE
+from pipka.system import IS_MAC
 
 # Настройка голоса: 'ru-RU-DmitryNeural' — приятный мужской голос
 VOICE = "ru-RU-DmitryNeural"
@@ -95,12 +96,32 @@ class Speaker:
 
     async def _speak_async(self, text):
         # Онлайн-голос Microsoft Edge иногда ничего не возвращает (NoAudioReceived).
-        # Тогда говорим встроенным голосом Windows и 10 минут Edge не трогаем.
+        # Тогда говорим встроенным голосом системы и 10 минут Edge не трогаем.
         if time.time() >= self._edge_off_until:
             if await self._speak_edge(text):
                 return
             self._edge_off_until = time.time() + 600
-        self._speak_windows(text)
+        if IS_MAC:
+            self._speak_mac(text)
+        else:
+            self._speak_windows(text)
+
+    def _speak_mac(self, text):
+        """Встроенный голос Mac. Русский голос Milena; если его нет — голос по умолчанию."""
+        for args in (["say", "-v", "Milena", text], ["say", text]):
+            try:
+                self._proc = subprocess.Popen(args, stderr=subprocess.PIPE)
+                _, err = self._proc.communicate()
+            except OSError as exc:
+                self._report(f"Ошибка озвучки Mac: {exc}")
+                return
+            finally:
+                code = self._proc.returncode if self._proc is not None else 0
+                self._proc = None
+            if code == 0 or self._stop_event.is_set():
+                return
+        self._report("Не получилось озвучить: добавь русский голос в "
+                     "Системные настройки → Универсальный доступ → Устная речь.")
 
     def _speak_windows(self, text):
         """Встроенный русский голос Windows (Irina) через tts.ps1. Работает без интернета."""

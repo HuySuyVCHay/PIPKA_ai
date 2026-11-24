@@ -1,5 +1,4 @@
 import html
-import os
 import re
 import threading
 from datetime import datetime
@@ -24,16 +23,12 @@ from PySide6.QtWidgets import (
     QMenu,
 )
 
-try:
-    import winsound
-except ImportError:
-    winsound = None
-
 from pipka import ai, autostart, extras, files, gemini_client, keystore, settings
 from pipka.commands import handle as handle_command, execute_confirmed
 from pipka.config import PROJECT_DIR
 from pipka.dice import DiceWidget
 from pipka.roulette import RouletteDialog
+from pipka.system import FONT, beep, open_path
 from pipka.stt import VoiceListener, libs_available
 from pipka.tgbot import TelegramBot
 from pipka.tts import Speaker
@@ -57,7 +52,7 @@ STYLE = f"""
 QMainWindow, QWidget {{
     background:{BG};
     color:{TEXT};
-    font-family:'Segoe UI';
+    font-family:'{FONT}';
     font-size:10pt;
 }}
 QFrame#panel {{
@@ -868,11 +863,7 @@ class MainWindow(QMainWindow):
         self.dice.interact()
         self.bring_to_front()
         self.voice_label.setText("Слушаю тебя…")
-        if winsound is not None:
-            try:
-                winsound.Beep(880, 120)
-            except RuntimeError:
-                pass
+        beep(880, 120)
 
     def on_voice_error(self, message):
         print(datetime.now().strftime("%H:%M:%S"), "ошибка голоса:", message, flush=True)
@@ -949,13 +940,9 @@ class MainWindow(QMainWindow):
     # ---------- напоминания и Telegram ----------
     def on_reminder(self, text):
         self.bring_to_front()
-        if winsound is not None:
-            for _ in range(3):
-                try:
-                    winsound.Beep(988, 180)
-                    winsound.Beep(1319, 220)
-                except RuntimeError:
-                    break
+        for _ in range(3):
+            beep(988, 180)
+            beep(1319, 220)
         self.reply("⏰ " + text)
         self.dice.interact()
         self.notify_phone("⏰ " + text)
@@ -1048,6 +1035,6 @@ class MainWindow(QMainWindow):
 
     def open_data_folder(self):
         try:
-            os.startfile(str(PROJECT_DIR))
+            open_path(PROJECT_DIR)
         except OSError as exc:
             self.add_note(f"Не получилось открыть папку: {exc}")
