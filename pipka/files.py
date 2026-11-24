@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from pipka import apps
+from pipka.system import IS_MAC
 
 HOME_DEPTH = 5
 DRIVE_DEPTH = 3
@@ -20,7 +21,7 @@ SKIP_DIRS = {
     "appdata", "node_modules", ".venv", "venv", "env", ".git", "__pycache__", ".idea",
     "steamapps", "windows", "program files", "program files (x86)", "programdata",
     "$recycle.bin", "system volume information", "site-packages", "dist", "build",
-    "cache", "temp", "tmp", "libraries", "assets", "versions", "natives", "logs",
+    "cache", "temp", "tmp", "library", "libraries", "assets", "versions", "natives", "logs",
     "resourcepacks", "shaderpacks", "crash-reports", "runtime", "jre", "jdk",
 }
 
@@ -34,11 +35,21 @@ def _roots():
     """(папка, глубина, приоритет): сначала рабочий стол и документы, потом диски."""
     home = Path.home()
     roots = []
-    for rank, name in enumerate(("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music")):
+    for rank, name in enumerate(("Desktop", "Documents", "Downloads", "Pictures", "Videos",
+                                 "Movies", "Music")):
         for base in (home, home / "OneDrive"):
             folder = base / name
             if folder.is_dir():
                 roots.append((folder, HOME_DEPTH, rank))
+    if IS_MAC:
+        # Флешки и внешние диски на Mac появляются в /Volumes
+        try:
+            for volume in Path("/Volumes").iterdir():
+                if volume.is_dir() and volume.name != "Macintosh HD":
+                    roots.append((volume, DRIVE_DEPTH, 10))
+        except OSError:
+            pass
+        return roots
     for letter in "DEFG":
         drive = Path(f"{letter}:/")
         if drive.exists():
@@ -167,7 +178,7 @@ _LOCATIONS = [
     (r"(?:в|из)\s+загрузк(?:ах|ами|и)", ["Downloads"]),
     (r"(?:в|из)\s+документ(?:ах|ов)", ["Documents"]),
     (r"(?:в|из)\s+(?:картинк(?:ах|и)|изображени(?:ях|й)|фото)", ["Pictures"]),
-    (r"(?:в|из)\s+видео", ["Videos"]),
+    (r"(?:в|из)\s+видео", ["Videos", "Movies"]),
     (r"(?:в|из)\s+музык(?:е|и)", ["Music"]),
 ]
 _DRIVE_RE = re.compile(r"(?:на|с)\s+диск[еа]?\s+([a-zа-я])\b")

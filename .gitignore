@@ -25,3 +25,6 @@ settings.json
 casino.json
 pipka_log.txt
 models/
+
+# Описание сборки для Mac — нужно в репозитории
+!pipka_mac.spec
